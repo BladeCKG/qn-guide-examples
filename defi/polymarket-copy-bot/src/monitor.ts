@@ -8,6 +8,8 @@ export interface Trade {
   timestamp: number;
   market: string;
   tokenId: string;
+  slug?: string;
+  eventSlug?: string;
   side: 'BUY' | 'SELL';
   price: number;
   size: number;
@@ -61,6 +63,8 @@ export class TradeMonitor {
       timestamp: apiTrade.timestamp * 1000,
       market: apiTrade.conditionId || apiTrade.market,
       tokenId: apiTrade.asset,
+      slug: apiTrade.slug,
+      eventSlug: apiTrade.eventSlug,
       side: apiTrade.side.toUpperCase() as 'BUY' | 'SELL',
       price: parseFloat(apiTrade.price),
       size: parseFloat(apiTrade.usdcSize || apiTrade.size),

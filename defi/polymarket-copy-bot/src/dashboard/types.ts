@@ -58,6 +58,7 @@ export interface DashboardTrade {
   timestamp: string;
   market: string;
   tokenId: string;
+  eventUrl?: string;
   side: 'BUY' | 'SELL';
   outcome: TradeOutcome;
   targetPrice: number;

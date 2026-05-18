@@ -1,4 +1,5 @@
 import { calculateCopySize, config, validateConfig } from './config.js';
+import { DashboardLinkResolver } from './dashboard/link-resolver.js';
 import { DashboardServer } from './dashboard/server.js';
 import { DashboardStore } from './dashboard/store.js';
 import type { DashboardConfigSummary, DashboardStats, EventCategory, EventLevel } from './dashboard/types.js';
@@ -22,6 +23,7 @@ class PolymarketCopyBot {
   private risk: RiskManager;
   private dashboardStore: DashboardStore;
   private dashboardServer?: DashboardServer;
+  private dashboardLinkResolver: DashboardLinkResolver;
   private isRunning = false;
   private processedTrades: Set<string> = new Set();
   private botStartTime = 0;
@@ -39,6 +41,7 @@ class PolymarketCopyBot {
     this.monitor = new TradeMonitor();
     this.positions = new PositionTracker();
     this.risk = new RiskManager(this.positions);
+    this.dashboardLinkResolver = new DashboardLinkResolver();
     this.dashboardStore = new DashboardStore({
       status: {
         phase: 'idle',
@@ -207,7 +210,7 @@ class PolymarketCopyBot {
 
     const plan = this.buildExecutionPlan(trade);
     if (!plan) {
-      this.dashboardStore.appendTrade({
+      await this.appendDashboardTrade(trade, {
         market: trade.market,
         tokenId: trade.tokenId,
         side: trade.side,
@@ -230,7 +233,7 @@ class PolymarketCopyBot {
     const riskCheck = this.risk.checkTrade(trade, plan.copyNotional);
     if (!riskCheck.allowed) {
       console.log(`Risk check blocked trade: ${riskCheck.reason}`);
-      this.appendDashboardTrade({
+      await this.appendDashboardTrade(trade, {
         market: trade.market,
         tokenId: trade.tokenId,
         side: trade.side,
@@ -252,7 +255,7 @@ class PolymarketCopyBot {
       this.refreshDashboardState();
       console.log('Failed to copy trade');
       console.log('   Reason: trader not initialized');
-      this.appendDashboardTrade({
+      await this.appendDashboardTrade(trade, {
         market: trade.market,
         tokenId: trade.tokenId,
         side: trade.side,
@@ -291,7 +294,7 @@ class PolymarketCopyBot {
       console.log(
         `Session Stats: ${this.stats.tradesCopied}/${this.stats.tradesDetected} copied, ${this.stats.tradesFailed} failed`
       );
-      this.appendDashboardTrade({
+      await this.appendDashboardTrade(trade, {
         market: trade.market,
         tokenId: trade.tokenId,
         side: result.side,
@@ -315,7 +318,7 @@ class PolymarketCopyBot {
       console.log(
         `Session Stats: ${this.stats.tradesCopied}/${this.stats.tradesDetected} copied, ${this.stats.tradesFailed} failed`
       );
-      this.appendDashboardTrade({
+      await this.appendDashboardTrade(trade, {
         market: trade.market,
         tokenId: trade.tokenId,
         side: trade.side,
@@ -460,7 +463,7 @@ class PolymarketCopyBot {
       );
     }
 
-    this.appendDashboardTrade({
+    void this.appendDashboardTrade(trade, {
       market: trade.market,
       tokenId: trade.tokenId,
       side: trade.side,
@@ -531,7 +534,7 @@ class PolymarketCopyBot {
     this.dashboardStore.appendEvent(details === undefined ? { level, category, message } : { level, category, message, details });
   }
 
-  private appendDashboardTrade(params: {
+  private async appendDashboardTrade(trade: Trade, params: {
     market: string;
     tokenId: string;
     side: 'BUY' | 'SELL';
@@ -544,7 +547,7 @@ class PolymarketCopyBot {
     mode: 'live' | 'dry-run';
     message?: string;
     realizedPnl?: number;
-  }): void {
+  }): Promise<void> {
     const tradePayload = {
       market: params.market,
       tokenId: params.tokenId,
@@ -556,10 +559,16 @@ class PolymarketCopyBot {
       status: params.status,
       mode: params.mode,
       ...(params.copyShares === undefined ? {} : { copyShares: params.copyShares }),
+      ...(await this.resolveDashboardTradeUrl(trade)),
       ...(params.message === undefined ? {} : { message: params.message }),
       ...(params.realizedPnl === undefined ? {} : { realizedPnl: params.realizedPnl }),
     };
     this.dashboardStore.appendTrade(tradePayload);
+  }
+
+  private async resolveDashboardTradeUrl(trade: Trade): Promise<{ eventUrl: string } | {}> {
+    const eventUrl = await this.dashboardLinkResolver.resolveTradeUrl(trade);
+    return eventUrl ? { eventUrl } : {};
   }
 
   private getWebSocketMode(): 'disabled' | 'market' | 'user' {

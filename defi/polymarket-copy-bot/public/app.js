@@ -62,6 +62,14 @@ function tag(text, kind) {
   return `<span class="tag tag-${escapeHtml(kind)}">${escapeHtml(text)}</span>`;
 }
 
+function renderMarketLink(label, eventUrl) {
+  const safeLabel = escapeHtml(label);
+  if (!eventUrl) {
+    return safeLabel;
+  }
+  return `<a class="market-link" href="${escapeHtml(eventUrl)}" target="_blank" rel="noreferrer">${safeLabel}</a>`;
+}
+
 function renderStats(snapshot) {
   const stats = [
     ['Trades Detected', snapshot.stats.tradesDetected],
@@ -130,7 +138,7 @@ function renderTrades(snapshot) {
           <td>${tag(trade.status, trade.status)}</td>
           <td>${escapeHtml(trade.mode)}</td>
           <td>${tag(trade.side, trade.side.toLowerCase())}</td>
-          <td>${escapeHtml(trade.market)}</td>
+          <td>${renderMarketLink(trade.market, trade.eventUrl)}</td>
           <td>${trade.targetSize} USDC @ ${fmtNumber(trade.targetPrice, 3)}</td>
           <td>
             $${fmtNumber(trade.copyNotional, 2)}
