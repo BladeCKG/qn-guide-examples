@@ -1,12 +1,13 @@
 # Polymarket Copy Trading Bot
 
-TypeScript bot that watches a target Polymarket wallet and copies new `BUY` trades with configurable sizing and risk caps.
+TypeScript bot that watches a target Polymarket wallet and copies new `BUY` and `SELL` trades with configurable sizing and risk caps.
 
 ## What It Does
 
 - Watches a target wallet via REST polling.
 - Uses WebSocket subscriptions for faster market updates when enabled.
-- Copies only `BUY` trades (SELL trades are intentionally skipped).
+- Copies both `BUY` and `SELL` trades.
+- Supports `DRY_RUN=true` to monitor and simulate copy decisions without placing orders or sending approval transactions.
 - Auto-checks/sets required token approvals in EOA mode.
 - Applies position sizing, slippage, and optional notional risk caps.
 
@@ -74,6 +75,7 @@ npm run start:prod
 - `RPC_URL`: Polygon JSON-RPC endpoint
 - `USE_WEBSOCKET`: `true|false`
 - `USE_USER_CHANNEL`: `true|false` (`true` requires valid API creds for WS auth)
+- `DRY_RUN`: `true|false` (`true` monitors and simulates only)
 - `POSITION_MULTIPLIER`: copied size multiplier (e.g. `0.1`)
 - `MAX_TRADE_SIZE`, `MIN_TRADE_SIZE`
 - `SLIPPAGE_TOLERANCE`: e.g. `0.02`

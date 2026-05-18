@@ -20,6 +20,10 @@ export class RiskManager {
       return { allowed: false, reason: 'Copy notional is <= 0' };
     }
 
+    if (trade.side === 'SELL') {
+      return { allowed: true };
+    }
+
     if (config.risk.maxSessionNotional > 0) {
       const nextSession = this.sessionNotional + copyNotional;
       if (nextSession > config.risk.maxSessionNotional) {
@@ -51,11 +55,19 @@ export class RiskManager {
     price: number;
     side: 'BUY' | 'SELL';
   }): void {
-    this.sessionNotional += params.notional;
+    if (params.side === 'BUY') {
+      this.sessionNotional += params.notional;
+    } else {
+      this.sessionNotional = Math.max(0, this.sessionNotional - params.notional);
+    }
     this.positions.recordFill(params);
   }
 
   getSessionNotional(): number {
     return this.sessionNotional;
+  }
+
+  syncWithPositions(): void {
+    this.sessionNotional = this.positions.getTotalNotional();
   }
 }

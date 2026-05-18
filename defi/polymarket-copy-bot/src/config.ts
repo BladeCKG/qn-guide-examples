@@ -6,6 +6,11 @@ function parseCsv(value?: string): string[] {
   return value.split(',').map((v) => v.trim()).filter(Boolean);
 }
 
+function parseBoolean(value: string | undefined, defaultValue: boolean): boolean {
+  if (value === undefined) return defaultValue;
+  return value.toLowerCase() === 'true';
+}
+
 const useWebSocket = process.env.USE_WEBSOCKET !== 'false';
 
 export const config = {
@@ -25,6 +30,7 @@ export const config = {
   },
 
   trading: {
+    dryRun: parseBoolean(process.env.DRY_RUN, false),
     positionSizeMultiplier: parseFloat(process.env.POSITION_MULTIPLIER || '0.1'),
     maxTradeSize: parseFloat(process.env.MAX_TRADE_SIZE || '100'),
     minTradeSize: parseFloat(process.env.MIN_TRADE_SIZE || '1'),
@@ -47,16 +53,36 @@ export const config = {
   }
 };
 
+export function calculateCopySize(originalSize: number): number {
+  const { positionSizeMultiplier, maxTradeSize, minTradeSize, orderType } = config.trading;
+  let size = originalSize * positionSizeMultiplier;
+  size = Math.min(size, maxTradeSize);
+  const marketMin = orderType === 'FOK' || orderType === 'FAK' ? 1 : minTradeSize;
+  size = Math.max(size, marketMin);
+  return Math.round(size * 100) / 100;
+}
+
 export function validateConfig(): void {
-  const required = ['targetWallet', 'privateKey'];
+  const required = ['targetWallet'];
+  const privateKeyRequired = !config.trading.dryRun || config.monitoring.useUserChannel;
+  if (privateKeyRequired) {
+    required.push('privateKey');
+  }
+
   for (const key of required) {
     if (!config[key as keyof typeof config]) {
       throw new Error(`Missing required config: ${key}`);
     }
   }
 
-  console.log('ℹ️  API credentials will be derived/generated from PRIVATE_KEY at startup');
+  if (config.privateKey) {
+    console.log('API credentials will be derived/generated from PRIVATE_KEY at startup');
+  } else {
+    console.log('DRY_RUN enabled without PRIVATE_KEY: monitoring only, no trade execution/auth setup');
+  }
 
-  console.log('✅ Configuration validated');
-  console.log(`   Auth: EOA (signature type 0)`);
+  console.log('Configuration validated');
+  if (config.privateKey) {
+    console.log('   Auth: EOA (signature type 0)');
+  }
 }
