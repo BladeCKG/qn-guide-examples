@@ -32,6 +32,7 @@ export interface DashboardConfigSummary {
   rpcUrl: string;
   orderType: 'LIMIT' | 'FOK' | 'FAK';
   positionMultiplier: number;
+  minTargetTradeSize: number;
   minTradeSize: number;
   maxTradeSize: number;
   slippageTolerance: number;

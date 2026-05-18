@@ -85,6 +85,7 @@ npm run start:prod
 - `DASHBOARD_PORT`: local dashboard port
 - `DRY_RUN`: `true|false` (`true` monitors and simulates only)
 - `POSITION_MULTIPLIER`: copied size multiplier (e.g. `0.1`)
+- `MIN_TARGET_TRADE_SIZE`: skip source trades smaller than this USDC amount before copy sizing
 - `MAX_TRADE_SIZE`, `MIN_TRADE_SIZE`
 - `SLIPPAGE_TOLERANCE`: e.g. `0.02`
 - `ORDER_TYPE`: `LIMIT`, `FOK`, or `FAK`

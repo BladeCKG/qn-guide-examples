@@ -78,6 +78,9 @@ class PolymarketCopyBot {
     console.log(`Target wallet: ${config.targetWallet}`);
     console.log(`Dry run: ${config.trading.dryRun ? 'Enabled' : 'Disabled'}`);
     console.log(`Position multiplier: ${config.trading.positionSizeMultiplier * 100}%`);
+    if (config.trading.minTargetTradeSize > 0) {
+      console.log(`Min target trade size: ${config.trading.minTargetTradeSize} USDC`);
+    }
     console.log(`Max trade size: ${config.trading.maxTradeSize} USDC`);
     console.log(`Order type: ${config.trading.orderType}`);
     console.log(`WebSocket: ${config.monitoring.useWebSocket ? 'Enabled' : 'Disabled'}`);
@@ -328,6 +331,19 @@ class PolymarketCopyBot {
   }
 
   private buildExecutionPlan(trade: Trade): ExecutionPlan | undefined {
+    if (config.trading.minTargetTradeSize > 0 && trade.size < config.trading.minTargetTradeSize) {
+      console.log(
+        `Skipping trade below target minimum: ${trade.size.toFixed(6)} USDC < ${config.trading.minTargetTradeSize.toFixed(6)} USDC`
+      );
+      this.recordEvent(
+        'info',
+        'trade',
+        'Skipped tiny target trade',
+        `${trade.size.toFixed(6)} USDC < ${config.trading.minTargetTradeSize.toFixed(6)} USDC`
+      );
+      return undefined;
+    }
+
     const desiredCopyNotional = calculateCopySize(trade.size);
 
     if (trade.side === 'BUY') {
@@ -537,6 +553,7 @@ class PolymarketCopyBot {
       positionMultiplier: config.trading.positionSizeMultiplier,
       minTradeSize: config.trading.minTradeSize,
       maxTradeSize: config.trading.maxTradeSize,
+      minTargetTradeSize: config.trading.minTargetTradeSize,
       slippageTolerance: config.trading.slippageTolerance,
       pollInterval: config.monitoring.pollInterval,
       useWebSocket: config.monitoring.useWebSocket,

@@ -32,6 +32,7 @@ export const config = {
   trading: {
     dryRun: parseBoolean(process.env.DRY_RUN, false),
     positionSizeMultiplier: parseFloat(process.env.POSITION_MULTIPLIER || '0.1'),
+    minTargetTradeSize: parseFloat(process.env.MIN_TARGET_TRADE_SIZE || '0'),
     maxTradeSize: parseFloat(process.env.MAX_TRADE_SIZE || '100'),
     minTradeSize: parseFloat(process.env.MIN_TRADE_SIZE || '1'),
     slippageTolerance: parseFloat(process.env.SLIPPAGE_TOLERANCE || '0.02'),
