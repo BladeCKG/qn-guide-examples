@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import type {
   DashboardConfigSummary,
   DashboardEvent,
+  DashboardPosition,
   DashboardState,
   DashboardStats,
   DashboardStatus,
@@ -9,8 +10,6 @@ import type {
   EventCategory,
   EventLevel,
 } from './types.js';
-import type { PositionState } from '../positions.js';
-
 const DEFAULT_RECENT_ITEMS = 100;
 
 function isoNow(): string {
@@ -69,7 +68,7 @@ export class DashboardStore {
     this.emit();
   }
 
-  setPositions(positions: PositionState[]): void {
+  setPositions(positions: DashboardPosition[]): void {
     this.state.positions = positions
       .slice()
       .sort((a, b) => b.notional - a.notional);

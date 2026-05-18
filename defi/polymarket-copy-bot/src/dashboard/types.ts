@@ -73,11 +73,15 @@ export interface DashboardTrade {
   realizedPnl?: number;
 }
 
+export interface DashboardPosition extends PositionState {
+  eventUrl?: string;
+}
+
 export interface DashboardState {
   status: DashboardStatus;
   stats: DashboardStats;
   config: DashboardConfigSummary;
-  positions: PositionState[];
+  positions: DashboardPosition[];
   recentTrades: DashboardTrade[];
   recentEvents: DashboardEvent[];
 }

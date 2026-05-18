@@ -2,7 +2,7 @@ import { calculateCopySize, config, validateConfig } from './config.js';
 import { DashboardServer } from './dashboard/server.js';
 import { DashboardStore } from './dashboard/store.js';
 import { DashboardTradeMetadataResolver } from './dashboard/trade-metadata-resolver.js';
-import type { DashboardConfigSummary, DashboardStats, EventCategory, EventLevel } from './dashboard/types.js';
+import type { DashboardConfigSummary, DashboardPosition, DashboardStats, EventCategory, EventLevel } from './dashboard/types.js';
 import { TradeMonitor } from './monitor.js';
 import type { Trade } from './monitor.js';
 import { PositionTracker } from './positions.js';
@@ -546,7 +546,32 @@ class PolymarketCopyBot {
   }
 
   private publishPositions(): void {
-    this.dashboardStore.setPositions(this.positions.getPositions());
+    void this.publishPositionsAsync();
+  }
+
+  private async publishPositionsAsync(): Promise<void> {
+    const positionStates = this.positions.getPositions();
+    const dashboardPositions: DashboardPosition[] = await Promise.all(
+      positionStates.map(async (position) => {
+        const metadata = await this.dashboardTradeMetadataResolver.resolve({
+          txHash: `position-${position.tokenId}`,
+          timestamp: position.lastUpdated,
+          market: position.market,
+          tokenId: position.tokenId,
+          side: 'BUY',
+          price: position.avgPrice || 0,
+          size: position.notional || 0,
+          outcome: position.outcome as Trade['outcome'],
+        });
+
+        return {
+          ...position,
+          ...(metadata.eventUrl === undefined ? {} : { eventUrl: metadata.eventUrl }),
+        };
+      })
+    );
+
+    this.dashboardStore.setPositions(dashboardPositions);
     this.refreshDashboardState();
   }
 

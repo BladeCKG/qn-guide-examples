@@ -112,7 +112,7 @@ function renderPositions(snapshot) {
     .map(
       (position) => `
         <tr>
-          <td>${escapeHtml(position.market || position.tokenId)}</td>
+          <td>${renderMarketLink(position.market || position.tokenId, position.eventUrl)}</td>
           <td>${escapeHtml(position.outcome)}</td>
           <td>${fmtNumber(position.shares, 4)}</td>
           <td>${fmtNumber(position.avgPrice, 4)}</td>
