@@ -38,6 +38,12 @@ export interface CopyExecutionResult {
   tokenId: string;
 }
 
+export interface SimulatedCopyExecutionResult extends CopyExecutionResult {
+  simulated: boolean;
+  message: string;
+  fillKind: 'full' | 'partial' | 'resting' | 'none';
+}
+
 export class TradeExecutor {
   private wallet: ethers.Wallet;
   private provider: ethers.providers.JsonRpcProvider;
@@ -305,6 +311,29 @@ export class TradeExecutor {
     });
   }
 
+  async simulateCopyTrade(
+    originalTrade: Trade,
+    options: CopyExecutionOptions = {}
+  ): Promise<SimulatedCopyExecutionResult> {
+    const orderType = config.trading.orderType;
+    const copyNotional = options.copyNotionalOverride ?? this.calculateCopySize(originalTrade.size);
+
+    console.log(`Simulating copy trade (${orderType}):`);
+    console.log(`   Market: ${originalTrade.market}`);
+    console.log(`   Side: ${originalTrade.side}`);
+    console.log(`   Original size: ${originalTrade.size} USDC`);
+    console.log(`   Token ID: ${originalTrade.tokenId}`);
+    console.log(`   Copy notional: ${copyNotional} USDC`);
+    if (options.copySharesOverride) {
+      console.log(`   Copy shares override: ${options.copySharesOverride}`);
+    }
+
+    if (orderType === 'FOK' || orderType === 'FAK') {
+      return this.simulateMarketOrder(originalTrade, orderType, copyNotional, options.copySharesOverride);
+    }
+    return this.simulateLimitOrder(originalTrade, copyNotional, options.copySharesOverride);
+  }
+
   private async executeWithRetry<T>(fn: () => Promise<T>, attempt: number = 1): Promise<T> {
     try {
       return await fn();
@@ -435,6 +464,52 @@ export class TradeExecutor {
     };
   }
 
+  private async simulateLimitOrder(
+    originalTrade: Trade,
+    copyNotional: number,
+    copySharesOverride?: number
+  ): Promise<SimulatedCopyExecutionResult> {
+    await this.validateBalance(copyNotional, originalTrade.tokenId, originalTrade.side, copySharesOverride);
+
+    const orderbook = await this.clobClient.getOrderBook(originalTrade.tokenId);
+    this.ensureLiquidity(orderbook, originalTrade.side);
+
+    const bestPrice = this.getBestPrice(orderbook, originalTrade.side, originalTrade.price);
+    const limitPrice = this.applySlippage(bestPrice, originalTrade.side, config.trading.slippageTolerance);
+    const validatedPrice = await this.validatePrice(limitPrice, originalTrade.tokenId);
+    const requestedShares = copySharesOverride ?? this.calculateSharesFromNotional(copyNotional, validatedPrice);
+    const match = this.simulateOrderbookMatch(orderbook, originalTrade.side, copyNotional, requestedShares, validatedPrice);
+
+    if (match.copyShares <= 0) {
+      return {
+        simulated: false,
+        orderId: 'dry-run-limit-resting',
+        copyNotional: 0,
+        copyShares: 0,
+        price: validatedPrice,
+        side: originalTrade.side,
+        tokenId: originalTrade.tokenId,
+        fillKind: 'resting',
+        message: `No immediate fill. LIMIT would rest on book at ${validatedPrice.toFixed(4)}.`,
+      };
+    }
+
+    const requestedFilled = match.copyShares + 0.000001 >= requestedShares;
+    return {
+      simulated: true,
+      orderId: requestedFilled ? 'dry-run-limit-full' : 'dry-run-limit-partial',
+      copyNotional: match.copyNotional,
+      copyShares: match.copyShares,
+      price: match.price,
+      side: originalTrade.side,
+      tokenId: originalTrade.tokenId,
+      fillKind: requestedFilled ? 'full' : 'partial',
+      message: requestedFilled
+        ? `LIMIT would fully fill immediately at avg ${match.price.toFixed(4)}.`
+        : `LIMIT would partially fill immediately at avg ${match.price.toFixed(4)} and leave the rest resting at ${validatedPrice.toFixed(4)}.`,
+    };
+  }
+
   private async executeMarketOrder(
     originalTrade: Trade,
     orderType: 'FOK' | 'FAK',
@@ -490,6 +565,124 @@ export class TradeExecutor {
       price: validatedPrice,
       side: originalTrade.side,
       tokenId: originalTrade.tokenId,
+    };
+  }
+
+  private async simulateMarketOrder(
+    originalTrade: Trade,
+    orderType: 'FOK' | 'FAK',
+    copyNotional: number,
+    copySharesOverride?: number
+  ): Promise<SimulatedCopyExecutionResult> {
+    await this.validateBalance(copyNotional, originalTrade.tokenId, originalTrade.side, copySharesOverride);
+
+    const orderbook = await this.clobClient.getOrderBook(originalTrade.tokenId);
+    this.ensureLiquidity(orderbook, originalTrade.side);
+
+    const bestPrice = this.getBestPrice(orderbook, originalTrade.side, originalTrade.price);
+    const marketPrice = this.applySlippage(bestPrice, originalTrade.side, config.trading.slippageTolerance);
+    const validatedPrice = await this.validatePrice(marketPrice, originalTrade.tokenId);
+    const requestedShares = copySharesOverride ?? this.calculateSharesFromNotional(copyNotional, validatedPrice);
+    const match = this.simulateOrderbookMatch(orderbook, originalTrade.side, copyNotional, requestedShares, validatedPrice);
+    const fullFill =
+      originalTrade.side === 'BUY'
+        ? match.copyNotional + 0.000001 >= copyNotional
+        : match.copyShares + 0.000001 >= requestedShares;
+
+    if (orderType === 'FOK' && !fullFill) {
+      return {
+        simulated: false,
+        orderId: 'dry-run-fok-none',
+        copyNotional: 0,
+        copyShares: 0,
+        price: validatedPrice,
+        side: originalTrade.side,
+        tokenId: originalTrade.tokenId,
+        fillKind: 'none',
+        message: `FOK would fail: insufficient liquidity within slippage cap ${validatedPrice.toFixed(4)}.`,
+      };
+    }
+
+    if (match.copyShares <= 0) {
+      return {
+        simulated: false,
+        orderId: `dry-run-${orderType.toLowerCase()}-none`,
+        copyNotional: 0,
+        copyShares: 0,
+        price: validatedPrice,
+        side: originalTrade.side,
+        tokenId: originalTrade.tokenId,
+        fillKind: 'none',
+        message: `${orderType} would not fill: no liquidity within slippage cap ${validatedPrice.toFixed(4)}.`,
+      };
+    }
+
+    return {
+      simulated: true,
+      orderId: fullFill ? `dry-run-${orderType.toLowerCase()}-full` : `dry-run-${orderType.toLowerCase()}-partial`,
+      copyNotional: match.copyNotional,
+      copyShares: match.copyShares,
+      price: match.price,
+      side: originalTrade.side,
+      tokenId: originalTrade.tokenId,
+      fillKind: fullFill ? 'full' : 'partial',
+      message: fullFill
+        ? `${orderType} would fully fill at avg ${match.price.toFixed(4)}.`
+        : `${orderType} would partially fill at avg ${match.price.toFixed(4)}.`,
+    };
+  }
+
+  private simulateOrderbookMatch(
+    orderbook: any,
+    side: 'BUY' | 'SELL',
+    requestedNotional: number,
+    requestedShares: number,
+    cappedPrice: number
+  ): { copyNotional: number; copyShares: number; price: number } {
+    const levels = side === 'BUY' ? orderbook.asks : orderbook.bids;
+    let filledShares = 0;
+    let filledNotional = 0;
+    let remainingBudget = requestedNotional;
+    let remainingShares = requestedShares;
+
+    for (const level of levels) {
+      const levelPrice = Number(level?.price);
+      const levelSize = Number(level?.size);
+      if (!Number.isFinite(levelPrice) || !Number.isFinite(levelSize) || levelSize <= 0) {
+        continue;
+      }
+
+      const priceAllowed = side === 'BUY' ? levelPrice <= cappedPrice + 0.000001 : levelPrice >= cappedPrice - 0.000001;
+      if (!priceAllowed) {
+        continue;
+      }
+
+      if (side === 'BUY') {
+        const affordableShares = remainingBudget / levelPrice;
+        const takeShares = Math.min(levelSize, affordableShares);
+        if (takeShares <= 0) continue;
+        filledShares += takeShares;
+        filledNotional += takeShares * levelPrice;
+        remainingBudget -= takeShares * levelPrice;
+        if (remainingBudget <= 0.000001) break;
+      } else {
+        const takeShares = Math.min(levelSize, remainingShares);
+        if (takeShares <= 0) continue;
+        filledShares += takeShares;
+        filledNotional += takeShares * levelPrice;
+        remainingShares -= takeShares;
+        if (remainingShares <= 0.000001) break;
+      }
+    }
+
+    const copyShares = Math.round(filledShares * 10000) / 10000;
+    const copyNotional = Math.round(filledNotional * 100) / 100;
+    const price = copyShares > 0 ? copyNotional / copyShares : cappedPrice;
+
+    return {
+      copyNotional,
+      copyShares,
+      price,
     };
   }
 

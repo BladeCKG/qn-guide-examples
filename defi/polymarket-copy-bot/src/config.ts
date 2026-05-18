@@ -68,11 +68,7 @@ export function calculateCopySize(originalSize: number): number {
 }
 
 export function validateConfig(): void {
-  const required = ['targetWallet'];
-  const privateKeyRequired = !config.trading.dryRun || config.monitoring.useUserChannel;
-  if (privateKeyRequired) {
-    required.push('privateKey');
-  }
+  const required = ['targetWallet', 'privateKey'];
 
   for (const key of required) {
     if (!config[key as keyof typeof config]) {
@@ -80,14 +76,8 @@ export function validateConfig(): void {
     }
   }
 
-  if (config.privateKey) {
-    console.log('API credentials will be derived/generated from PRIVATE_KEY at startup');
-  } else {
-    console.log('DRY_RUN enabled without PRIVATE_KEY: monitoring only, no trade execution/auth setup');
-  }
+  console.log('API credentials will be derived/generated from PRIVATE_KEY at startup');
 
   console.log('Configuration validated');
-  if (config.privateKey) {
-    console.log('   Auth: EOA (signature type 0)');
-  }
+  console.log('   Auth: EOA (signature type 0)');
 }

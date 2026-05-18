@@ -102,24 +102,15 @@ class PolymarketCopyBot {
     await this.monitor.initialize();
     this.recordEvent('success', 'network', 'REST trade monitor initialized');
 
-    const needsExecutor = !config.trading.dryRun || config.monitoring.useUserChannel;
-    if (needsExecutor) {
-      this.executor = new TradeExecutor();
-      await this.executor.initialize({ enableTrading: !config.trading.dryRun });
-      this.recordEvent(
-        'success',
-        'system',
-        'Trade executor initialized',
-        config.trading.dryRun ? 'Dry-run auth mode only' : 'Live trading enabled'
-      );
-
-      if (!config.trading.dryRun) {
-        await this.reconcilePositions();
-      }
-    } else {
-      console.log('Dry run without user-channel auth: skipping trader initialization');
-      this.recordEvent('info', 'system', 'Skipping trader initialization in dry-run mode');
-    }
+    this.executor = new TradeExecutor();
+    await this.executor.initialize({ enableTrading: !config.trading.dryRun });
+    this.recordEvent(
+      'success',
+      'system',
+      'Trade executor initialized',
+      config.trading.dryRun ? 'Dry-run execution parity enabled' : 'Live trading enabled'
+    );
+    await this.reconcilePositions();
 
     if (config.monitoring.useWebSocket) {
       this.wsMonitor = new WebSocketMonitor();
@@ -246,7 +237,7 @@ class PolymarketCopyBot {
     }
 
     if (config.trading.dryRun) {
-      this.handleDryRunTrade(trade, plan);
+      await this.handleDryRunTrade(trade, plan);
       return;
     }
 
@@ -319,7 +310,8 @@ class PolymarketCopyBot {
         tokenId: trade.tokenId,
         side: result.side,
         outcome: trade.outcome,
-        targetPrice: result.price,
+        targetPrice: trade.price,
+        copyPrice: result.price,
         targetSize: trade.size,
         copyNotional: result.copyNotional,
         copyShares: result.copyShares,
@@ -452,26 +444,49 @@ class PolymarketCopyBot {
     }
   }
 
-  private handleDryRunTrade(trade: Trade, plan: ExecutionPlan): void {
-    const simulatedShares =
-      plan.copySharesOverride ?? Math.round((plan.copyNotional / Math.max(trade.price, 0.0001)) * 10000) / 10000;
-    const simulatedNotional = Math.round(simulatedShares * trade.price * 100) / 100;
+  private async handleDryRunTrade(trade: Trade, plan: ExecutionPlan): Promise<void> {
+    if (!this.executor) {
+      throw new Error('Trader not initialized for dry run');
+    }
+
+    const simulation = await this.executor.simulateCopyTrade(trade, {
+      copyNotionalOverride: plan.copyNotional,
+      ...(plan.copySharesOverride === undefined ? {} : { copySharesOverride: plan.copySharesOverride }),
+    });
+    if (!simulation.simulated || simulation.copyShares <= 0 || simulation.copyNotional <= 0) {
+      console.log(`DRY RUN: ${simulation.message}`);
+      await this.appendDashboardTrade(trade, {
+        market: trade.market,
+        tokenId: trade.tokenId,
+        side: trade.side,
+        outcome: trade.outcome,
+        targetPrice: trade.price,
+        targetSize: trade.size,
+        copyNotional: 0,
+        status: 'blocked',
+        mode: 'dry-run',
+        message: simulation.message,
+      });
+      this.recordEvent('warning', 'trade', 'Dry-run trade not fillable', simulation.message);
+      return;
+    }
+
     const fill = this.positions.recordFillWithResult({
       trade,
-      notional: simulatedNotional,
-      shares: simulatedShares,
-      price: trade.price,
+      notional: simulation.copyNotional,
+      shares: simulation.copyShares,
+      price: simulation.price,
       side: trade.side,
     });
 
     this.stats.tradesSimulated++;
-    this.stats.totalVolume += simulatedNotional;
+    this.stats.totalVolume += simulation.copyNotional;
     this.stats.dryRunRealizedPnl += fill.realizedPnl;
     this.publishPositions();
     this.refreshDashboardState();
 
     console.log(
-      `DRY RUN: copied ${trade.side} ${simulatedNotional.toFixed(2)} USDC (${simulatedShares} shares) @ ${trade.price.toFixed(3)}`
+      `DRY RUN: copied ${trade.side} ${simulation.copyNotional.toFixed(2)} USDC (${simulation.copyShares} shares) @ ${simulation.price.toFixed(3)}`
     );
     if (trade.side === 'SELL') {
       console.log(
@@ -482,29 +497,32 @@ class PolymarketCopyBot {
         `   Position: ${fill.position.shares.toFixed(4)} shares @ avg ${fill.position.avgPrice.toFixed(4)} | Session realized P/L: ${this.formatUsd(this.stats.dryRunRealizedPnl)}`
       );
     }
+    console.log(`   Simulation: ${simulation.message}`);
 
-    void this.appendDashboardTrade(trade, {
+    await this.appendDashboardTrade(trade, {
       market: trade.market,
       tokenId: trade.tokenId,
       side: trade.side,
       outcome: trade.outcome,
       targetPrice: trade.price,
+      copyPrice: simulation.price,
       targetSize: trade.size,
-      copyNotional: simulatedNotional,
-      copyShares: simulatedShares,
+      copyNotional: simulation.copyNotional,
+      copyShares: simulation.copyShares,
       status: 'simulated',
       mode: 'dry-run',
-      message:
+      message: `${simulation.message} ${
         trade.side === 'SELL'
           ? `Realized P/L ${this.formatUsd(fill.realizedPnl)}`
-          : `Position avg ${fill.position.avgPrice.toFixed(4)}`,
+          : `Position avg ${fill.position.avgPrice.toFixed(4)}`
+      }`,
       realizedPnl: fill.realizedPnl,
     });
     this.recordEvent(
       'success',
       'trade',
       `Dry-run ${trade.side} simulated`,
-      `${simulatedNotional.toFixed(2)} USDC at ${trade.price.toFixed(3)}`
+      `${simulation.copyNotional.toFixed(2)} USDC at ${simulation.price.toFixed(3)} (${simulation.fillKind})`
     );
   }
 
@@ -607,6 +625,7 @@ class PolymarketCopyBot {
     side: 'BUY' | 'SELL';
     outcome: Trade['outcome'];
     targetPrice: number;
+    copyPrice?: number;
     targetSize: number;
     copyNotional: number;
     copyShares?: number;
@@ -621,6 +640,7 @@ class PolymarketCopyBot {
       side: params.side,
       outcome: params.outcome,
       targetPrice: params.targetPrice,
+      ...(params.copyPrice === undefined ? {} : { copyPrice: params.copyPrice }),
       targetSize: params.targetSize,
       copyNotional: params.copyNotional,
       status: params.status,

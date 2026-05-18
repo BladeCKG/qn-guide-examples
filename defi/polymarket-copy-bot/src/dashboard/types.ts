@@ -64,6 +64,7 @@ export interface DashboardTrade {
   side: 'BUY' | 'SELL';
   outcome: TradeOutcome;
   targetPrice: number;
+  copyPrice?: number;
   targetSize: number;
   copyNotional: number;
   copyShares?: number;

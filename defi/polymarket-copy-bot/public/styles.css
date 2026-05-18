@@ -161,6 +161,16 @@ h1 {
   text-decoration: underline;
 }
 
+.trade-market-cell {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.trade-number-cell {
+  white-space: nowrap;
+}
+
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -215,6 +225,61 @@ table {
   width: 100%;
   border-collapse: collapse;
   min-width: 900px;
+}
+
+.recent-trades-table {
+  table-layout: fixed;
+  min-width: 1180px;
+}
+
+.recent-trades-table th:nth-child(1),
+.recent-trades-table td:nth-child(1) {
+  width: 110px;
+}
+
+.recent-trades-table th:nth-child(2),
+.recent-trades-table td:nth-child(2) {
+  width: 88px;
+}
+
+.recent-trades-table th:nth-child(3),
+.recent-trades-table td:nth-child(3) {
+  width: 68px;
+}
+
+.recent-trades-table th:nth-child(4),
+.recent-trades-table td:nth-child(4) {
+  width: 64px;
+}
+
+.recent-trades-table th:nth-child(5),
+.recent-trades-table td:nth-child(5) {
+  width: 120px;
+}
+
+.recent-trades-table th:nth-child(6),
+.recent-trades-table td:nth-child(6) {
+  width: 140px;
+}
+
+.recent-trades-table th:nth-child(7),
+.recent-trades-table td:nth-child(7) {
+  width: 160px;
+}
+
+.recent-trades-table th:nth-child(8),
+.recent-trades-table td:nth-child(8) {
+  width: 130px;
+}
+
+.recent-trades-table th:nth-child(9),
+.recent-trades-table td:nth-child(9) {
+  width: 90px;
+}
+
+.recent-trades-table th:nth-child(10),
+.recent-trades-table td:nth-child(10) {
+  width: auto;
 }
 
 th,

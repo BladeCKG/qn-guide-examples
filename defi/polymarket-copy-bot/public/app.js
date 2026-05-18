@@ -70,6 +70,14 @@ function renderMarketLink(label, eventUrl) {
   return `<a class="market-link" href="${escapeHtml(eventUrl)}" target="_blank" rel="noreferrer">${safeLabel}</a>`;
 }
 
+function shortenMarketLabel(label) {
+  const text = String(label ?? '');
+  if (!text.startsWith('0x') || text.length <= 18) {
+    return text;
+  }
+  return `${text.slice(0, 8)}...${text.slice(-6)}`;
+}
+
 function renderStats(snapshot) {
   const stats = [
     ['Trades Detected', snapshot.stats.tradesDetected],
@@ -138,16 +146,20 @@ function renderTrades(snapshot) {
           <td>${tag(trade.status, trade.status)}</td>
           <td>${escapeHtml(trade.mode)}</td>
           <td>${tag(trade.side, trade.side.toLowerCase())}</td>
-          <td>${renderMarketLink(trade.market, trade.eventUrl)}</td>
+          <td class="trade-market-cell" title="${escapeHtml(trade.market)}">${renderMarketLink(shortenMarketLabel(trade.market), trade.eventUrl)}</td>
           <td>
             ${renderMarketRules(trade)}
           </td>
-          <td>${trade.targetSize} USDC @ ${fmtNumber(trade.targetPrice, 3)}</td>
-          <td>
+          <td class="trade-number-cell">
+            ${trade.targetSize} USDC
+            <br><span class="muted">@ ${fmtNumber(trade.targetPrice, 3)}</span>
+          </td>
+          <td class="trade-number-cell">
             $${fmtNumber(trade.copyNotional, 2)}
+            ${trade.copyPrice === undefined ? '' : `<br><span class="muted">@ ${fmtNumber(trade.copyPrice, 3)}</span>`}
             ${trade.copyShares ? `<br><span class="muted">${fmtNumber(trade.copyShares, 4)} shares</span>` : ''}
           </td>
-          <td class="${(trade.realizedPnl || 0) >= 0 ? 'positive' : 'negative'}">
+          <td class="trade-number-cell ${(trade.realizedPnl || 0) >= 0 ? 'positive' : 'negative'}">
             ${trade.realizedPnl === undefined ? '--' : fmtUsd(trade.realizedPnl)}
           </td>
           <td>${escapeHtml(trade.message || '--')}</td>
