@@ -8,6 +8,7 @@ TypeScript bot that watches a target Polymarket wallet and copies new `BUY` and 
 - Uses WebSocket subscriptions for faster market updates when enabled.
 - Copies both `BUY` and `SELL` trades.
 - Supports `DRY_RUN=true` to monitor and simulate copy decisions without placing orders or sending approval transactions.
+- Ships with a real-time dashboard for stats, positions, trades, and operational events.
 - Auto-checks/sets required token approvals in EOA mode.
 - Applies position sizing, slippage, and optional notional risk caps.
 
@@ -55,6 +56,11 @@ npm run generate-api-creds
 npm start
 ```
 
+Dashboard:
+
+- Default URL: `http://localhost:3001`
+- Configure with `DASHBOARD_ENABLED` and `DASHBOARD_PORT`
+
 Dev/watch mode:
 
 ```bash
@@ -75,6 +81,8 @@ npm run start:prod
 - `RPC_URL`: Polygon JSON-RPC endpoint
 - `USE_WEBSOCKET`: `true|false`
 - `USE_USER_CHANNEL`: `true|false` (`true` requires valid API creds for WS auth)
+- `DASHBOARD_ENABLED`: `true|false`
+- `DASHBOARD_PORT`: local dashboard port
 - `DRY_RUN`: `true|false` (`true` monitors and simulates only)
 - `POSITION_MULTIPLIER`: copied size multiplier (e.g. `0.1`)
 - `MAX_TRADE_SIZE`, `MIN_TRADE_SIZE`
@@ -89,6 +97,7 @@ See `.env.example` for the full list.
 - The bot starts copying only trades that happen after startup time.
 - User API credentials are derived/generated from `PRIVATE_KEY` at startup.
 - Frequent WebSocket disconnect/reconnect can happen; REST polling remains active as fallback.
+- The dashboard streams live state over Server-Sent Events and does not require a separate database.
 
 ## Security
 

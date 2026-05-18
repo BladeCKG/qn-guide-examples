@@ -50,6 +50,11 @@ export const config = {
     useUserChannel: process.env.USE_USER_CHANNEL === 'true',
     wsAssetIds: parseCsv(process.env.WS_ASSET_IDS),
     wsMarketIds: parseCsv(process.env.WS_MARKET_IDS),
+  },
+
+  dashboard: {
+    enabled: parseBoolean(process.env.DASHBOARD_ENABLED, true),
+    port: parseInt(process.env.DASHBOARD_PORT || '3001'),
   }
 };
 

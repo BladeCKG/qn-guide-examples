@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Polymarket Copy Bot Dashboard</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Real-Time Operations</p>
+          <h1>Polymarket Copy Bot</h1>
+          <p class="subcopy">Live telemetry for trades, risk, positions, runtime state, and dry-run simulation outcomes.</p>
+        </div>
+        <div class="hero-status">
+          <div class="status-pill" id="connection-pill">Connecting...</div>
+          <div class="status-meta">
+            <span id="phase-text">Idle</span>
+            <span id="uptime-text">Uptime: --</span>
+          </div>
+        </div>
+      </header>
+
+      <main class="grid">
+        <section class="card card-wide">
+          <div class="card-header">
+            <h2>Overview</h2>
+            <span class="muted" id="last-updated">Last updated --</span>
+          </div>
+          <div class="stats-grid" id="stats-grid"></div>
+        </section>
+
+        <section class="card">
+          <div class="card-header">
+            <h2>Runtime</h2>
+          </div>
+          <dl class="kv-list" id="runtime-list"></dl>
+        </section>
+
+        <section class="card">
+          <div class="card-header">
+            <h2>Trading Config</h2>
+          </div>
+          <dl class="kv-list" id="config-list"></dl>
+        </section>
+
+        <section class="card card-wide">
+          <div class="card-header">
+            <h2>Open Positions</h2>
+            <span class="muted" id="position-count">0 positions</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Market</th>
+                  <th>Outcome</th>
+                  <th>Shares</th>
+                  <th>Avg Price</th>
+                  <th>Notional</th>
+                  <th>Updated</th>
+                </tr>
+              </thead>
+              <tbody id="positions-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="card card-wide">
+          <div class="card-header">
+            <h2>Recent Trades</h2>
+            <span class="muted">Latest execution decisions</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Status</th>
+                  <th>Mode</th>
+                  <th>Side</th>
+                  <th>Market</th>
+                  <th>Target</th>
+                  <th>Copied</th>
+                  <th>P/L</th>
+                  <th>Note</th>
+                </tr>
+              </thead>
+              <tbody id="trades-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="card card-wide">
+          <div class="card-header">
+            <h2>Event Stream</h2>
+            <span class="muted">Operational log</span>
+          </div>
+          <div class="event-list" id="events-list"></div>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
