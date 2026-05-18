@@ -2,7 +2,7 @@ import { calculateCopySize, config, validateConfig } from './config.js';
 import { TradeMonitor } from './monitor.js';
 import { WebSocketMonitor } from './websocket-monitor.js';
 import type { Trade } from './monitor.js';
-import { PositionTracker } from './positions.js';
+import { PositionTracker, type PositionFillResult } from './positions.js';
 import { RiskManager } from './risk-manager.js';
 import { TradeExecutor } from './trader.js';
 
@@ -27,6 +27,7 @@ class PolymarketCopyBot {
     tradesFailed: 0,
     tradesSimulated: 0,
     totalVolume: 0,
+    dryRunRealizedPnl: 0,
   };
 
   constructor() {
@@ -156,11 +157,7 @@ class PolymarketCopyBot {
     }
 
     if (config.trading.dryRun) {
-      this.stats.tradesSimulated++;
-      console.log(
-        `DRY RUN: would copy ${trade.side} ${plan.copyNotional.toFixed(2)} USDC` +
-          (plan.copySharesOverride ? ` (${plan.copySharesOverride} shares)` : '')
-      );
+      this.handleDryRunTrade(trade, plan);
       return;
     }
 
@@ -288,6 +285,45 @@ class PolymarketCopyBot {
     console.log(`   Trades simulated: ${this.stats.tradesSimulated}`);
     console.log(`   Trades failed: ${this.stats.tradesFailed}`);
     console.log(`   Total volume: ${this.stats.totalVolume.toFixed(2)} USDC`);
+    if (config.trading.dryRun) {
+      console.log(`   Dry-run realized P/L: ${this.formatUsd(this.stats.dryRunRealizedPnl)}`);
+    }
+  }
+
+  private handleDryRunTrade(trade: Trade, plan: ExecutionPlan): void {
+    const simulatedShares =
+      plan.copySharesOverride ?? Math.round((plan.copyNotional / Math.max(trade.price, 0.0001)) * 10000) / 10000;
+    const simulatedNotional = Math.round(simulatedShares * trade.price * 100) / 100;
+    const fill = this.positions.recordFillWithResult({
+      trade,
+      notional: simulatedNotional,
+      shares: simulatedShares,
+      price: trade.price,
+      side: trade.side,
+    });
+
+    this.stats.tradesSimulated++;
+    this.stats.totalVolume += simulatedNotional;
+    this.stats.dryRunRealizedPnl += fill.realizedPnl;
+
+    console.log(
+      `DRY RUN: copied ${trade.side} ${simulatedNotional.toFixed(2)} USDC (${simulatedShares} shares) @ ${trade.price.toFixed(3)}`
+    );
+    if (trade.side === 'SELL') {
+      console.log(
+        `   Realized P/L: ${this.formatUsd(fill.realizedPnl)} | Session realized P/L: ${this.formatUsd(this.stats.dryRunRealizedPnl)}`
+      );
+    } else {
+      console.log(
+        `   Position: ${fill.position.shares.toFixed(4)} shares @ avg ${fill.position.avgPrice.toFixed(4)} | Session realized P/L: ${this.formatUsd(this.stats.dryRunRealizedPnl)}`
+      );
+    }
+  }
+
+  private formatUsd(value: number): string {
+    const rounded = Math.round(value * 100) / 100;
+    const sign = rounded >= 0 ? '+' : '-';
+    return `${sign}$${Math.abs(rounded).toFixed(2)}`;
   }
 
   private sleep(ms: number): Promise<void> {

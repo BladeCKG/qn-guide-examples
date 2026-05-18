@@ -10,6 +10,11 @@ export interface PositionState {
   lastUpdated: number;
 }
 
+export interface PositionFillResult {
+  position: PositionState;
+  realizedPnl: number;
+}
+
 export class PositionTracker {
   private positions = new Map<string, PositionState>();
 
@@ -68,29 +73,52 @@ export class PositionTracker {
     price: number;
     side: 'BUY' | 'SELL';
   }): void {
+    this.recordFillWithResult(params);
+  }
+
+  recordFillWithResult(params: {
+    trade: Trade;
+    notional: number;
+    shares: number;
+    price: number;
+    side: 'BUY' | 'SELL';
+  }): PositionFillResult {
     const { trade, notional, shares, price, side } = params;
     const key = trade.tokenId;
     const existing = this.positions.get(key);
 
-    const sign = side === 'BUY' ? 1 : -1;
-    const deltaShares = shares * sign;
-    const deltaNotional = notional * sign;
+    let realizedPnl = 0;
+    let nextShares = existing?.shares || 0;
+    let nextNotional = existing?.notional || 0;
+    let avgPrice = existing?.avgPrice || 0;
 
-    const nextShares = (existing?.shares || 0) + deltaShares;
-    const nextNotional = (existing?.notional || 0) + deltaNotional;
-    const avgPrice = nextShares !== 0 ? Math.abs(nextNotional / nextShares) : 0;
+    if (side === 'BUY') {
+      nextShares += shares;
+      nextNotional += notional;
+      avgPrice = nextShares > 0 ? Math.abs(nextNotional / nextShares) : 0;
+    } else {
+      const sellShares = Math.min(shares, nextShares);
+      realizedPnl = sellShares * (price - avgPrice);
+      nextShares = Math.max(0, nextShares - sellShares);
+      nextNotional = nextShares > 0 ? nextShares * avgPrice : 0;
+      avgPrice = nextShares > 0 ? avgPrice : 0;
+    }
 
     const updated: PositionState = {
       tokenId: trade.tokenId,
       market: trade.market,
       outcome: trade.outcome,
-      shares: Math.max(0, nextShares),
-      notional: Math.max(0, nextNotional),
-      avgPrice: nextShares !== 0 ? avgPrice : 0,
+      shares: nextShares,
+      notional: nextNotional,
+      avgPrice,
       lastUpdated: Date.now(),
     };
 
     this.positions.set(key, updated);
+    return {
+      position: updated,
+      realizedPnl: Math.round(realizedPnl * 100) / 100,
+    };
   }
 
   getPosition(tokenId: string): PositionState | undefined {
