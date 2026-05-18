@@ -59,6 +59,8 @@ export interface DashboardTrade {
   market: string;
   tokenId: string;
   eventUrl?: string;
+  minOrderSize?: number;
+  tickSize?: number;
   side: 'BUY' | 'SELL';
   outcome: TradeOutcome;
   targetPrice: number;

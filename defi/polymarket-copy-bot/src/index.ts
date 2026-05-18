@@ -1,7 +1,7 @@
 import { calculateCopySize, config, validateConfig } from './config.js';
-import { DashboardLinkResolver } from './dashboard/link-resolver.js';
 import { DashboardServer } from './dashboard/server.js';
 import { DashboardStore } from './dashboard/store.js';
+import { DashboardTradeMetadataResolver } from './dashboard/trade-metadata-resolver.js';
 import type { DashboardConfigSummary, DashboardStats, EventCategory, EventLevel } from './dashboard/types.js';
 import { TradeMonitor } from './monitor.js';
 import type { Trade } from './monitor.js';
@@ -23,7 +23,7 @@ class PolymarketCopyBot {
   private risk: RiskManager;
   private dashboardStore: DashboardStore;
   private dashboardServer?: DashboardServer;
-  private dashboardLinkResolver: DashboardLinkResolver;
+  private dashboardTradeMetadataResolver: DashboardTradeMetadataResolver;
   private isRunning = false;
   private processedTrades: Set<string> = new Set();
   private botStartTime = 0;
@@ -41,7 +41,7 @@ class PolymarketCopyBot {
     this.monitor = new TradeMonitor();
     this.positions = new PositionTracker();
     this.risk = new RiskManager(this.positions);
-    this.dashboardLinkResolver = new DashboardLinkResolver();
+    this.dashboardTradeMetadataResolver = new DashboardTradeMetadataResolver();
     this.dashboardStore = new DashboardStore({
       status: {
         phase: 'idle',
@@ -222,6 +222,26 @@ class PolymarketCopyBot {
         mode: config.trading.dryRun ? 'dry-run' : 'live',
         message: 'No executable plan for this trade',
       });
+      return;
+    }
+
+    const marketRuleBlock = await this.evaluateMarketRules(trade, plan);
+    if (marketRuleBlock) {
+      console.log(`Market rules blocked trade: ${marketRuleBlock.reason}`);
+      await this.appendDashboardTrade(trade, {
+        market: trade.market,
+        tokenId: trade.tokenId,
+        side: trade.side,
+        outcome: trade.outcome,
+        targetPrice: trade.price,
+        targetSize: trade.size,
+        copyNotional: marketRuleBlock.copyNotional,
+        status: 'blocked',
+        mode: config.trading.dryRun ? 'dry-run' : 'live',
+        ...(marketRuleBlock.copyShares === undefined ? {} : { copyShares: marketRuleBlock.copyShares }),
+        message: marketRuleBlock.reason,
+      });
+      this.recordEvent('warning', 'trade', 'Trade blocked by market rules', marketRuleBlock.reason);
       return;
     }
 
@@ -534,6 +554,28 @@ class PolymarketCopyBot {
     this.dashboardStore.appendEvent(details === undefined ? { level, category, message } : { level, category, message, details });
   }
 
+  private async evaluateMarketRules(
+    trade: Trade,
+    plan: ExecutionPlan
+  ): Promise<{ reason: string; copyShares?: number; copyNotional: number } | undefined> {
+    const metadata = await this.dashboardTradeMetadataResolver.resolve(trade);
+    const copyShares =
+      plan.copySharesOverride ?? Math.round((plan.copyNotional / Math.max(trade.price, 0.0001)) * 10000) / 10000;
+
+    if (metadata.minOrderSize !== undefined && copyShares < metadata.minOrderSize) {
+      const approxMinNotional = metadata.minOrderSize * trade.price;
+      return {
+        reason:
+          `Below market minimum: ${copyShares.toFixed(4)} shares < ${metadata.minOrderSize.toFixed(4)} shares` +
+          ` (~$${approxMinNotional.toFixed(2)} at current price)`,
+        copyShares,
+        copyNotional: Math.round(copyShares * trade.price * 100) / 100,
+      };
+    }
+
+    return undefined;
+  }
+
   private async appendDashboardTrade(trade: Trade, params: {
     market: string;
     tokenId: string;
@@ -559,16 +601,11 @@ class PolymarketCopyBot {
       status: params.status,
       mode: params.mode,
       ...(params.copyShares === undefined ? {} : { copyShares: params.copyShares }),
-      ...(await this.resolveDashboardTradeUrl(trade)),
+      ...(await this.dashboardTradeMetadataResolver.resolve(trade)),
       ...(params.message === undefined ? {} : { message: params.message }),
       ...(params.realizedPnl === undefined ? {} : { realizedPnl: params.realizedPnl }),
     };
     this.dashboardStore.appendTrade(tradePayload);
-  }
-
-  private async resolveDashboardTradeUrl(trade: Trade): Promise<{ eventUrl: string } | {}> {
-    const eventUrl = await this.dashboardLinkResolver.resolveTradeUrl(trade);
-    return eventUrl ? { eventUrl } : {};
   }
 
   private getWebSocketMode(): 'disabled' | 'market' | 'user' {

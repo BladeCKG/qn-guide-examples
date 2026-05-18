@@ -126,7 +126,7 @@ function renderPositions(snapshot) {
 
 function renderTrades(snapshot) {
   if (!snapshot.recentTrades.length) {
-    els.tradesBody.innerHTML = `<tr><td colspan="9"><div class="empty-state">Waiting for trade activity.</div></td></tr>`;
+    els.tradesBody.innerHTML = `<tr><td colspan="10"><div class="empty-state">Waiting for trade activity.</div></td></tr>`;
     return;
   }
 
@@ -139,6 +139,9 @@ function renderTrades(snapshot) {
           <td>${escapeHtml(trade.mode)}</td>
           <td>${tag(trade.side, trade.side.toLowerCase())}</td>
           <td>${renderMarketLink(trade.market, trade.eventUrl)}</td>
+          <td>
+            ${renderMarketRules(trade)}
+          </td>
           <td>${trade.targetSize} USDC @ ${fmtNumber(trade.targetPrice, 3)}</td>
           <td>
             $${fmtNumber(trade.copyNotional, 2)}
@@ -152,6 +155,28 @@ function renderTrades(snapshot) {
       `
     )
     .join('');
+}
+
+function renderMarketRules(trade) {
+  const rules = [];
+
+  if (trade.minOrderSize !== undefined) {
+    rules.push(`Min ${fmtNumber(trade.minOrderSize, 4)} shares`);
+    if (trade.targetPrice !== undefined) {
+      const approxUsd = trade.minOrderSize * trade.targetPrice;
+      rules.push(`<span class="muted">~$${fmtNumber(approxUsd, 2)} at target price</span>`);
+    }
+  }
+
+  if (trade.tickSize !== undefined) {
+    rules.push(`<span class="muted">Tick ${fmtNumber(trade.tickSize, 4)}</span>`);
+  }
+
+  if (!rules.length) {
+    return '--';
+  }
+
+  return rules.join('<br>');
 }
 
 function renderEvents(snapshot) {
