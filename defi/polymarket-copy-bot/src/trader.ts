@@ -46,9 +46,10 @@ export interface SimulatedCopyExecutionResult extends CopyExecutionResult {
 
 export class TradeExecutor {
   private wallet: ethers.Wallet;
-  private provider: ethers.providers.JsonRpcProvider;
+  private provider: ethers.providers.StaticJsonRpcProvider | ethers.providers.WebSocketProvider;
   private clobClient: ClobClient;
   private apiCreds?: { apiKey: string; secret: string; passphrase: string };
+  private readonly hasPrivateKey: boolean;
   private marketCache: Map<string, MarketMetadata> = new Map();
   private readonly CACHE_TTL = 3600000;
   private readonly RETRY_CONFIG: RetryConfig = {
@@ -72,8 +73,10 @@ export class TradeExecutor {
   private readonly MIN_MAX_FEE_GWEI = parseFloat(process.env.MIN_MAX_FEE_GWEI || '60');
 
   constructor() {
-    this.provider = new ethers.providers.JsonRpcProvider(config.rpcUrl);
-    this.wallet = new ethers.Wallet(config.privateKey, this.provider);
+    this.provider = this.createProvider(config.rpcUrl);
+    this.hasPrivateKey = config.privateKey.trim().length > 0;
+    const signer = this.hasPrivateKey ? new ethers.Wallet(config.privateKey, this.provider) : ethers.Wallet.createRandom().connect(this.provider);
+    this.wallet = signer;
 
     this.clobClient = new ClobClient(
       'https://clob.polymarket.com',
@@ -86,27 +89,47 @@ export class TradeExecutor {
     );
   }
 
+  private createProvider(rpcUrl: string): ethers.providers.StaticJsonRpcProvider | ethers.providers.WebSocketProvider {
+    const normalizedUrl = rpcUrl.trim();
+    const network = { chainId: config.chainId, name: 'matic' };
+
+    if (normalizedUrl.startsWith('ws://') || normalizedUrl.startsWith('wss://')) {
+      return new ethers.providers.WebSocketProvider(normalizedUrl, network);
+    }
+
+    return new ethers.providers.StaticJsonRpcProvider(normalizedUrl, network);
+  }
+
   async initialize(options: TraderInitializeOptions = {}): Promise<void> {
     const { enableTrading = true } = options;
+    const requiresWalletAuth = enableTrading || config.monitoring.useUserChannel;
 
     console.log('Initializing trader...');
-    console.log(`   Signing wallet (EOA): ${this.wallet.address}`);
-    const funderAddress = this.wallet.address;
-    console.log(`   Funder wallet: ${funderAddress}`);
-    console.log('   Signature type: 0');
+    if (requiresWalletAuth && !this.hasPrivateKey) {
+      throw new Error('PRIVATE_KEY is required for live trading or authenticated user-channel websocket mode');
+    }
 
-    try {
-      await this.deriveAndReinitApiKeys(funderAddress);
-      await this.validateApiCredentials();
-    } catch (error: any) {
-      console.error('Failed to initialize API credentials:', error.message);
-      throw error;
+    if (requiresWalletAuth) {
+      console.log(`   Signing wallet (EOA): ${this.wallet.address}`);
+      const funderAddress = this.wallet.address;
+      console.log(`   Funder wallet: ${funderAddress}`);
+      console.log('   Signature type: 0');
+
+      try {
+        await this.deriveAndReinitApiKeys(funderAddress);
+        await this.validateApiCredentials();
+      } catch (error: any) {
+        console.error('Failed to initialize API credentials:', error.message);
+        throw error;
+      }
+    } else {
+      console.log('   Dry run: using public market data only; wallet auth disabled');
     }
 
     if (enableTrading) {
       await this.ensureApprovals();
     } else {
-      console.log('   Dry run: skipping approval checks and on-chain writes');
+      console.log('   Dry run: skipping wallet approvals, balances, and on-chain writes');
     }
 
     console.log('Trader initialized');
@@ -277,6 +300,10 @@ export class TradeExecutor {
     return Math.max(price * (1 - slippage), 0.01);
   }
 
+  private getTargetAnchoredPriceCap(targetPrice: number, side: 'BUY' | 'SELL'): number {
+    return this.applySlippage(targetPrice, side, config.trading.slippageTolerance);
+  }
+
   private ensureLiquidity(orderbook: any, side: 'BUY' | 'SELL'): void {
     if (side === 'BUY' && orderbook.asks.length === 0) {
       throw new Error('No asks available in orderbook');
@@ -428,12 +455,14 @@ export class TradeExecutor {
     this.ensureLiquidity(orderbook, originalTrade.side);
 
     const bestPrice = this.getBestPrice(orderbook, originalTrade.side, originalTrade.price);
-    const limitPrice = this.applySlippage(bestPrice, originalTrade.side, config.trading.slippageTolerance);
+    const limitPrice = this.getTargetAnchoredPriceCap(originalTrade.price, originalTrade.side);
     const validatedPrice = await this.validatePrice(limitPrice, originalTrade.tokenId);
     const copyShares = copySharesOverride ?? this.calculateSharesFromNotional(copyNotional, validatedPrice);
     const actualNotional = Math.round(copyShares * validatedPrice * 100) / 100;
 
-    console.log(`   Limit price: ${validatedPrice.toFixed(4)}`);
+    console.log(`   Target price: ${originalTrade.price.toFixed(4)}`);
+    console.log(`   Best book price: ${bestPrice.toFixed(4)}`);
+    console.log(`   Limit price cap: ${validatedPrice.toFixed(4)}`);
     console.log(`   Copy shares: ${copyShares}`);
 
     const response = await this.clobClient.createAndPostOrder(
@@ -469,13 +498,11 @@ export class TradeExecutor {
     copyNotional: number,
     copySharesOverride?: number
   ): Promise<SimulatedCopyExecutionResult> {
-    await this.validateBalance(copyNotional, originalTrade.tokenId, originalTrade.side, copySharesOverride);
-
     const orderbook = await this.clobClient.getOrderBook(originalTrade.tokenId);
     this.ensureLiquidity(orderbook, originalTrade.side);
 
     const bestPrice = this.getBestPrice(orderbook, originalTrade.side, originalTrade.price);
-    const limitPrice = this.applySlippage(bestPrice, originalTrade.side, config.trading.slippageTolerance);
+    const limitPrice = this.getTargetAnchoredPriceCap(originalTrade.price, originalTrade.side);
     const validatedPrice = await this.validatePrice(limitPrice, originalTrade.tokenId);
     const requestedShares = copySharesOverride ?? this.calculateSharesFromNotional(copyNotional, validatedPrice);
     const match = this.simulateOrderbookMatch(orderbook, originalTrade.side, copyNotional, requestedShares, validatedPrice);
@@ -490,7 +517,7 @@ export class TradeExecutor {
         side: originalTrade.side,
         tokenId: originalTrade.tokenId,
         fillKind: 'resting',
-        message: `No immediate fill. LIMIT would rest on book at ${validatedPrice.toFixed(4)}.`,
+        message: `No immediate fill. LIMIT would rest on book at ${validatedPrice.toFixed(4)} (target ${originalTrade.price.toFixed(4)}).`,
       };
     }
 
@@ -505,7 +532,7 @@ export class TradeExecutor {
       tokenId: originalTrade.tokenId,
       fillKind: requestedFilled ? 'full' : 'partial',
       message: requestedFilled
-        ? `LIMIT would fully fill immediately at avg ${match.price.toFixed(4)}.`
+        ? `LIMIT would fully fill immediately at avg ${match.price.toFixed(4)} within target-anchored cap ${validatedPrice.toFixed(4)}.`
         : `LIMIT would partially fill immediately at avg ${match.price.toFixed(4)} and leave the rest resting at ${validatedPrice.toFixed(4)}.`,
     };
   }
@@ -526,12 +553,14 @@ export class TradeExecutor {
     this.ensureLiquidity(orderbook, originalTrade.side);
 
     const bestPrice = this.getBestPrice(orderbook, originalTrade.side, originalTrade.price);
-    const marketPrice = this.applySlippage(bestPrice, originalTrade.side, config.trading.slippageTolerance);
+    const marketPrice = this.getTargetAnchoredPriceCap(originalTrade.price, originalTrade.side);
     const validatedPrice = await this.validatePrice(marketPrice, originalTrade.tokenId);
     const copyShares = copySharesOverride ?? this.calculateSharesFromNotional(copyNotional, validatedPrice);
     const actualNotional = Math.round(copyShares * validatedPrice * 100) / 100;
 
-    console.log(`   Market price: ${validatedPrice.toFixed(4)}`);
+    console.log(`   Target price: ${originalTrade.price.toFixed(4)}`);
+    console.log(`   Best book price: ${bestPrice.toFixed(4)}`);
+    console.log(`   Market price cap: ${validatedPrice.toFixed(4)}`);
     console.log(`   Copy shares: ${copyShares}`);
 
     const orderTypeEnum = orderType === 'FOK' ? OrderType.FOK : OrderType.FAK;
@@ -574,13 +603,11 @@ export class TradeExecutor {
     copyNotional: number,
     copySharesOverride?: number
   ): Promise<SimulatedCopyExecutionResult> {
-    await this.validateBalance(copyNotional, originalTrade.tokenId, originalTrade.side, copySharesOverride);
-
     const orderbook = await this.clobClient.getOrderBook(originalTrade.tokenId);
     this.ensureLiquidity(orderbook, originalTrade.side);
 
     const bestPrice = this.getBestPrice(orderbook, originalTrade.side, originalTrade.price);
-    const marketPrice = this.applySlippage(bestPrice, originalTrade.side, config.trading.slippageTolerance);
+    const marketPrice = this.getTargetAnchoredPriceCap(originalTrade.price, originalTrade.side);
     const validatedPrice = await this.validatePrice(marketPrice, originalTrade.tokenId);
     const requestedShares = copySharesOverride ?? this.calculateSharesFromNotional(copyNotional, validatedPrice);
     const match = this.simulateOrderbookMatch(orderbook, originalTrade.side, copyNotional, requestedShares, validatedPrice);
@@ -599,7 +626,7 @@ export class TradeExecutor {
         side: originalTrade.side,
         tokenId: originalTrade.tokenId,
         fillKind: 'none',
-        message: `FOK would fail: insufficient liquidity within slippage cap ${validatedPrice.toFixed(4)}.`,
+        message: `FOK would fail: insufficient liquidity within target-anchored slippage cap ${validatedPrice.toFixed(4)}.`,
       };
     }
 
@@ -613,7 +640,7 @@ export class TradeExecutor {
         side: originalTrade.side,
         tokenId: originalTrade.tokenId,
         fillKind: 'none',
-        message: `${orderType} would not fill: no liquidity within slippage cap ${validatedPrice.toFixed(4)}.`,
+        message: `${orderType} would not fill: no liquidity within target-anchored slippage cap ${validatedPrice.toFixed(4)}.`,
       };
     }
 
@@ -627,8 +654,8 @@ export class TradeExecutor {
       tokenId: originalTrade.tokenId,
       fillKind: fullFill ? 'full' : 'partial',
       message: fullFill
-        ? `${orderType} would fully fill at avg ${match.price.toFixed(4)}.`
-        : `${orderType} would partially fill at avg ${match.price.toFixed(4)}.`,
+        ? `${orderType} would fully fill at avg ${match.price.toFixed(4)} within target-anchored cap ${validatedPrice.toFixed(4)}.`
+        : `${orderType} would partially fill at avg ${match.price.toFixed(4)} within target-anchored cap ${validatedPrice.toFixed(4)}.`,
     };
   }
 

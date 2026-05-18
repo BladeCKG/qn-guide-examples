@@ -216,26 +216,6 @@ class PolymarketCopyBot {
       return;
     }
 
-    const marketRuleBlock = await this.evaluateMarketRules(trade, plan);
-    if (marketRuleBlock) {
-      console.log(`Market rules blocked trade: ${marketRuleBlock.reason}`);
-      await this.appendDashboardTrade(trade, {
-        market: trade.market,
-        tokenId: trade.tokenId,
-        side: trade.side,
-        outcome: trade.outcome,
-        targetPrice: trade.price,
-        targetSize: trade.size,
-        copyNotional: marketRuleBlock.copyNotional,
-        status: 'blocked',
-        mode: config.trading.dryRun ? 'dry-run' : 'live',
-        ...(marketRuleBlock.copyShares === undefined ? {} : { copyShares: marketRuleBlock.copyShares }),
-        message: marketRuleBlock.reason,
-      });
-      this.recordEvent('warning', 'trade', 'Trade blocked by market rules', marketRuleBlock.reason);
-      return;
-    }
-
     if (config.trading.dryRun) {
       await this.handleDryRunTrade(trade, plan);
       return;
@@ -449,12 +429,89 @@ class PolymarketCopyBot {
       throw new Error('Trader not initialized for dry run');
     }
 
-    const simulation = await this.executor.simulateCopyTrade(trade, {
-      copyNotionalOverride: plan.copyNotional,
-      ...(plan.copySharesOverride === undefined ? {} : { copySharesOverride: plan.copySharesOverride }),
-    });
-    if (!simulation.simulated || simulation.copyShares <= 0 || simulation.copyNotional <= 0) {
-      console.log(`DRY RUN: ${simulation.message}`);
+    try {
+      const simulation = await this.executor.simulateCopyTrade(trade, {
+        copyNotionalOverride: plan.copyNotional,
+        ...(plan.copySharesOverride === undefined ? {} : { copySharesOverride: plan.copySharesOverride }),
+      });
+      if (!simulation.simulated || simulation.copyShares <= 0 || simulation.copyNotional <= 0) {
+        console.log(`DRY RUN: ${simulation.message}`);
+        await this.appendDashboardTrade(trade, {
+          market: trade.market,
+          tokenId: trade.tokenId,
+          side: trade.side,
+          outcome: trade.outcome,
+          targetPrice: trade.price,
+          targetSize: trade.size,
+          copyNotional: 0,
+          status: 'blocked',
+          mode: 'dry-run',
+          message: simulation.message,
+        });
+        this.recordEvent('warning', 'trade', 'Dry-run trade not fillable', simulation.message);
+        return;
+      }
+
+      const fill = this.positions.recordFillWithResult({
+        trade,
+        notional: simulation.copyNotional,
+        shares: simulation.copyShares,
+        price: simulation.price,
+        side: trade.side,
+      });
+
+      this.stats.tradesSimulated++;
+      this.stats.totalVolume += simulation.copyNotional;
+      this.stats.dryRunRealizedPnl += fill.realizedPnl;
+      this.publishPositions();
+      this.refreshDashboardState();
+
+      console.log(
+        `DRY RUN: copied ${trade.side} ${simulation.copyNotional.toFixed(2)} USDC (${simulation.copyShares} shares) @ ${simulation.price.toFixed(3)}`
+      );
+      if (trade.side === 'SELL') {
+        console.log(
+          `   Realized P/L: ${this.formatUsd(fill.realizedPnl)} | Session realized P/L: ${this.formatUsd(this.stats.dryRunRealizedPnl)}`
+        );
+      } else {
+        console.log(
+          `   Position: ${fill.position.shares.toFixed(4)} shares @ avg ${fill.position.avgPrice.toFixed(4)} | Session realized P/L: ${this.formatUsd(this.stats.dryRunRealizedPnl)}`
+        );
+      }
+      console.log(`   Simulation: ${simulation.message}`);
+
+      await this.appendDashboardTrade(trade, {
+        market: trade.market,
+        tokenId: trade.tokenId,
+        side: trade.side,
+        outcome: trade.outcome,
+        targetPrice: trade.price,
+        copyPrice: simulation.price,
+        targetSize: trade.size,
+        copyNotional: simulation.copyNotional,
+        copyShares: simulation.copyShares,
+        status: 'simulated',
+        mode: 'dry-run',
+        message: `${simulation.message} ${
+          trade.side === 'SELL'
+            ? `Realized P/L ${this.formatUsd(fill.realizedPnl)}`
+            : `Position avg ${fill.position.avgPrice.toFixed(4)}`
+        }`,
+        realizedPnl: fill.realizedPnl,
+      });
+      this.recordEvent(
+        'success',
+        'trade',
+        `Dry-run ${trade.side} simulated`,
+        `${simulation.copyNotional.toFixed(2)} USDC at ${simulation.price.toFixed(3)} (${simulation.fillKind})`
+      );
+    } catch (error: any) {
+      this.stats.tradesFailed++;
+      this.refreshDashboardState();
+      console.log('DRY RUN: simulation failed');
+      if (error?.message) {
+        console.log(`   Reason: ${error.message}`);
+      }
       await this.appendDashboardTrade(trade, {
         market: trade.market,
         tokenId: trade.tokenId,
@@ -462,68 +519,14 @@ class PolymarketCopyBot {
         outcome: trade.outcome,
         targetPrice: trade.price,
         targetSize: trade.size,
-        copyNotional: 0,
-        status: 'blocked',
+        copyNotional: plan.copyNotional,
+        status: 'failed',
         mode: 'dry-run',
-        message: simulation.message,
+        message: error?.message || 'Unknown dry-run error',
+        ...(plan.copySharesOverride === undefined ? {} : { copyShares: plan.copySharesOverride }),
       });
-      this.recordEvent('warning', 'trade', 'Dry-run trade not fillable', simulation.message);
-      return;
+      this.recordEvent('error', 'trade', 'Dry-run simulation failed', error?.message || 'Unknown error');
     }
-
-    const fill = this.positions.recordFillWithResult({
-      trade,
-      notional: simulation.copyNotional,
-      shares: simulation.copyShares,
-      price: simulation.price,
-      side: trade.side,
-    });
-
-    this.stats.tradesSimulated++;
-    this.stats.totalVolume += simulation.copyNotional;
-    this.stats.dryRunRealizedPnl += fill.realizedPnl;
-    this.publishPositions();
-    this.refreshDashboardState();
-
-    console.log(
-      `DRY RUN: copied ${trade.side} ${simulation.copyNotional.toFixed(2)} USDC (${simulation.copyShares} shares) @ ${simulation.price.toFixed(3)}`
-    );
-    if (trade.side === 'SELL') {
-      console.log(
-        `   Realized P/L: ${this.formatUsd(fill.realizedPnl)} | Session realized P/L: ${this.formatUsd(this.stats.dryRunRealizedPnl)}`
-      );
-    } else {
-      console.log(
-        `   Position: ${fill.position.shares.toFixed(4)} shares @ avg ${fill.position.avgPrice.toFixed(4)} | Session realized P/L: ${this.formatUsd(this.stats.dryRunRealizedPnl)}`
-      );
-    }
-    console.log(`   Simulation: ${simulation.message}`);
-
-    await this.appendDashboardTrade(trade, {
-      market: trade.market,
-      tokenId: trade.tokenId,
-      side: trade.side,
-      outcome: trade.outcome,
-      targetPrice: trade.price,
-      copyPrice: simulation.price,
-      targetSize: trade.size,
-      copyNotional: simulation.copyNotional,
-      copyShares: simulation.copyShares,
-      status: 'simulated',
-      mode: 'dry-run',
-      message: `${simulation.message} ${
-        trade.side === 'SELL'
-          ? `Realized P/L ${this.formatUsd(fill.realizedPnl)}`
-          : `Position avg ${fill.position.avgPrice.toFixed(4)}`
-      }`,
-      realizedPnl: fill.realizedPnl,
-    });
-    this.recordEvent(
-      'success',
-      'trade',
-      `Dry-run ${trade.side} simulated`,
-      `${simulation.copyNotional.toFixed(2)} USDC at ${simulation.price.toFixed(3)} (${simulation.fillKind})`
-    );
   }
 
   private createDashboardConfigSummary(): DashboardConfigSummary {
@@ -595,28 +598,6 @@ class PolymarketCopyBot {
 
   private recordEvent(level: EventLevel, category: EventCategory, message: string, details?: string): void {
     this.dashboardStore.appendEvent(details === undefined ? { level, category, message } : { level, category, message, details });
-  }
-
-  private async evaluateMarketRules(
-    trade: Trade,
-    plan: ExecutionPlan
-  ): Promise<{ reason: string; copyShares?: number; copyNotional: number } | undefined> {
-    const metadata = await this.dashboardTradeMetadataResolver.resolve(trade);
-    const copyShares =
-      plan.copySharesOverride ?? Math.round((plan.copyNotional / Math.max(trade.price, 0.0001)) * 10000) / 10000;
-
-    if (metadata.minOrderSize !== undefined && copyShares < metadata.minOrderSize) {
-      const approxMinNotional = metadata.minOrderSize * trade.price;
-      return {
-        reason:
-          `Below market minimum: ${copyShares.toFixed(4)} shares < ${metadata.minOrderSize.toFixed(4)} shares` +
-          ` (~$${approxMinNotional.toFixed(2)} at current price)`,
-        copyShares,
-        copyNotional: Math.round(copyShares * trade.price * 100) / 100,
-      };
-    }
-
-    return undefined;
   }
 
   private async appendDashboardTrade(trade: Trade, params: {
