@@ -67,6 +67,14 @@ Dev/watch mode:
 npm run dev
 ```
 
+Trader scanner:
+
+```bash
+npm run find-traders -- --candidate-limit=100 --min-account-age-months=5 --lookback-days=90 --target-daily-profit-usd=1000
+```
+
+This scanner uses the public leaderboard as a candidate source, then filters by public profile age and estimated realized daily P/L from activity history.
+
 Build + run compiled output:
 
 ```bash
