@@ -74,6 +74,7 @@ npm run find-traders -- --candidate-limit=100 --min-account-age-months=5 --lookb
 ```
 
 This scanner uses the public leaderboard as a candidate source, then filters by public profile age and estimated realized daily P/L from activity history.
+Use `--skip-pages=N` to skip `N` leaderboard pages. With the current page size of `500`, `--skip-pages=10` starts at offset `5000`.
 
 Build + run compiled output:
 

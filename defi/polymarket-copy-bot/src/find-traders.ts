@@ -17,6 +17,7 @@ interface ScanOptions {
   category: LeaderboardCategory;
   leaderboardTimePeriod: LeaderboardPeriod;
   candidateLimit: number;
+  skipPages: number;
   leaderboardOrderBy: 'PNL' | 'VOL';
   minAccountAgeMonths: number;
   lookbackDays: number;
@@ -92,6 +93,7 @@ interface CandidateResult {
 
 const DATA_API = 'https://data-api.polymarket.com';
 const GAMMA_API = 'https://gamma-api.polymarket.com';
+const LEADERBOARD_PAGE_SIZE = 50;
 const PAGE_LIMIT = 500;
 const MAX_ACTIVITY_OFFSET = 3000;
 const EPSILON = 1e-8;
@@ -100,7 +102,8 @@ function parseArgs(argv: string[]): ScanOptions {
   const defaults: ScanOptions = {
     category: 'OVERALL',
     leaderboardTimePeriod: 'ALL',
-    candidateLimit: 100,
+    candidateLimit: 100000,
+    skipPages: 0,
     leaderboardOrderBy: 'PNL',
     minAccountAgeMonths: 5,
     lookbackDays: 90,
@@ -132,6 +135,7 @@ function parseArgs(argv: string[]): ScanOptions {
     category: (parsed.get('category') as LeaderboardCategory) || defaults.category,
     leaderboardTimePeriod: (parsed.get('leaderboard-time-period') as LeaderboardPeriod) || defaults.leaderboardTimePeriod,
     candidateLimit: parseInt(parsed.get('candidate-limit') || String(defaults.candidateLimit), 10),
+    skipPages: parseInt(parsed.get('skip-pages') || String(defaults.skipPages), 10),
     leaderboardOrderBy: (parsed.get('leaderboard-order-by') as 'PNL' | 'VOL') || defaults.leaderboardOrderBy,
     minAccountAgeMonths: parseFloat(parsed.get('min-account-age-months') || String(defaults.minAccountAgeMonths)),
     lookbackDays: parseInt(parsed.get('lookback-days') || String(defaults.lookbackDays), 10),
@@ -157,13 +161,15 @@ async function getJson<T>(url: string, params?: Record<string, string | number |
 
 async function fetchLeaderboard(options: ScanOptions): Promise<LeaderboardTrader[]> {
   const traders: LeaderboardTrader[] = [];
+  const pageSize = LEADERBOARD_PAGE_SIZE;
+  const startingOffset = Math.max(0, options.skipPages) * pageSize;
 
-  for (let offset = 0; traders.length < options.candidateLimit; offset += 50) {
+  for (let offset = startingOffset; traders.length < options.candidateLimit; offset += pageSize) {
     const page = await getJson<LeaderboardTrader[]>(`${DATA_API}/v1/leaderboard`, {
       category: options.category,
       timePeriod: options.leaderboardTimePeriod,
       orderBy: options.leaderboardOrderBy,
-      limit: Math.min(50, options.candidateLimit - traders.length),
+      limit: Math.min(pageSize, options.candidateLimit - traders.length),
       offset,
     });
 
@@ -172,7 +178,7 @@ async function fetchLeaderboard(options: ScanOptions): Promise<LeaderboardTrader
     }
 
     traders.push(...page);
-    if (page.length < 50) {
+    if (page.length < pageSize) {
       break;
     }
   }
@@ -502,8 +508,11 @@ async function main() {
   const minCreatedAt = addMonths(now, -options.minAccountAgeMonths);
   console.log('Scanning Polymarket leaderboard candidates...');
   console.log(
-    `Filters: category=${options.category}, candidates=${options.candidateLimit}, age<=${minCreatedAt.toISOString()} (created before), lookback=${options.lookbackDays}d`
+    `Filters: category=${options.category}, candidates=${options.candidateLimit}, skipPages=${options.skipPages}, age<=${minCreatedAt.toISOString()} (created before), lookback=${options.lookbackDays}d`
   );
+  if (options.candidateLimit >= 10000) {
+    console.log('Large scan requested: expect this to take a long time and potentially hit public API rate limits.');
+  }
 
   const candidates = await fetchLeaderboard(options);
   console.log(`Fetched ${candidates.length} leaderboard candidates`);
